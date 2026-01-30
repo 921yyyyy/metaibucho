@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>業務30 - 脆弱性の防壁 -</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser-arcade-physics.min.js"></script>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; touch-action: none; font-family: 'Courier New', Courier, monospace; }
+        #game-container { display: flex; justify-content: center; align-items: center; height: 100vh; }
+    </style>
+</head>
+<body>
+    <div id="game-container"></div>
+
+    <script>
+    const config = {
+        type: Phaser.AUTO,
+        width: 390, // iPhone 13/14 等の標準的アスペクト比
+        height: 844,
+        parent: 'game-container',
+        physics: { default: 'arcade', arcade: { gravity: { y: 0 }, debug: false } },
+        scene: { preload: preload, create: create, update: update }
+    };
+
+    const game = new Phaser.Game(config);
+
+    // グローバル変数
+    let timer = 30.00;
+    let stressLevel = 0; // 部長のイライラ度 (0-100)
+    let patchProgress = 0; // システム修復率 (0-100)
+    let isGameOver = false;
+
+    function preload() {
+        // 本来は画像アセットをロードしますが、今回は図形生成(GenerateTexture)で圧倒的演出を作ります
+    }
+
+    function create() {
+        const scene = this;
+
+        // --- 背景とグリッド演出 (サイバー感) ---
+        const bg = scene.add.graphics();
+        bg.fillStyle(0x1a1a1a, 1);
+        bg.fillRect(0, 0, 390, 844);
+        bg.lineStyle(1, 0x333333);
+        for(let i=0; i<844; i+=40) bg.lineBetween(0, i, 390, i);
+        for(let i=0; i<390; i+=40) bg.lineBetween(i, 0, i, 844);
+
+        // --- UI要素 ---
+        const timerText = scene.add.text(195, 80, '30.00', { fontSize: '80px', fill: '#ff0000', fontStyle: 'bold' }).setOrigin(0.5);
+        const stressBarBg = scene.add.rectangle(195, 180, 300, 20, 0x333333);
+        const stressBar = scene.add.rectangle(195, 180, 0, 20, 0xff00ff).setOrigin(0, 0.5);
+        stressBar.x = 195 - 150;
+        
+        scene.add.text(195, 160, '部長のイライラ度 (BURN OUT)', { fontSize: '14px', fill: '#ff00ff' }).setOrigin(0.5);
+
+        // --- 主人公（業務職） ---
+        const player = scene.add.circle(195, 700, 30, 0x00ffff).setInteractive();
+        scene.add.text(195, 740, 'あなた (業務職)', { fontSize: '16px', fill: '#00ffff' }).setOrigin(0.5);
+
+        // --- 部長（魔王枠） ---
+        const boss = scene.add.triangle(195, 350, 0, 80, 40, 0, 80, 80, 0x880000).setOrigin(0.5);
+        const bossLabel = scene.add.text(195, 280, '部長 (パワハラモード)', { fontSize: '20px', fill: '#ff0000', fontStyle: 'bold' }).setOrigin(0.5);
+
+        // --- 脆弱性オブジェクト (降ってくるタスク) ---
+        const vulnerabilities = scene.physics.add.group();
+
+        // タスク生成タイマー
+        scene.time.addEvent({
+            delay: 800,
+            callback: () => {
+                if (isGameOver) return;
+                const x = Phaser.Math.Between(50, 340);
+                const v = vulnerabilities.create(x, 350, null);
+                v.setDisplaySize(60, 30);
+                
+                // 脆弱性ラベル（外注先のミス）
+                const labels = ["SQLi", "XSS", "外注の嘘報告", "不要なログ", "パスワード平文"];
+                const text = scene.add.text(x, 350, Phaser.Utils.Array.GetRandom(labels), { fontSize: '12px', fill: '#fbff00' }).setOrigin(0.5);
+                v.textChild = text;
+                
+                v.setVelocityY(Phaser.Math.Between(150, 300));
+            },
+            loop: true
+        });
+
+        // --- インタラクション (タップで脆弱性をパッチ) ---
+        scene.input.on('gameobjectdown', (pointer, gameObject) => {
+            if (gameObject.type === 'Sprite' || gameObject.body) {
+                // 修正エフェクト
+                createExplosion(scene, gameObject.x, gameObject.y, 0x00ff00);
+                if(gameObject.textChild) gameObject.textChild.destroy();
+                gameObject.destroy();
+                
+                patchProgress += 2;
+                stressLevel = Math.max(0, stressLevel - 1); // 修正すれば部長も少し落ち着く
+            }
+        });
+
+        // --- メインループ代替 ---
+        scene.time.addEvent({
+            delay: 10,
+            callback: () => {
+                if (isGameOver) return;
+
+                // タイマー更新
+                timer -= 0.01;
+                timerText.setText(timer.toFixed(2));
+
+                // 部長のイライラ自然上昇
+                stressLevel += 0.05;
+                stressBar.width = (stressLevel / 100) * 300;
+
+                // 敗北条件
+                if (timer <= 0 || stressLevel >= 100) {
+                    endGame(scene, "腹括れよ！！！\n(強制徹夜確定)");
+                }
+
+                // 勝利条件
+                if (patchProgress >= 100) {
+                    endGame(scene, "部長：\n「僕の出した正解のおかげだね」\n(定時退社成功)");
+                }
+
+                // 30秒演出：部長の叫び
+                if (Math.floor(timer * 10) % 50 === 0) {
+                    spawnShout(scene);
+                }
+            },
+            loop: true
+        });
+    }
+
+    function spawnShout(scene) {
+        const shout = scene.add.text(Phaser.Math.Between(0, 300), Phaser.Math.Between(200, 600), '腹括れよ！！！', {
+            fontSize: '40px', fill: '#ff0000', fontStyle: 'bold', stroke: '#000', strokeThickness: 6
+        });
+        scene.tweens.add({
+            targets: shout,
+            alpha: 0,
+            scale: 2,
+            duration: 1000,
+            onComplete: () => shout.destroy()
+        });
+    }
+
+    function createExplosion(scene, x, y, color) {
+        for(let i=0; i<10; i++) {
+            const p = scene.add.rectangle(x, y, 5, 5, color);
+            scene.physics.add.existing(p);
+            p.body.setVelocity(Phaser.Math.Between(-200, 200), Phaser.Math.Between(-200, 200));
+            scene.tweens.add({ targets: p, alpha: 0, duration: 500, onComplete: () => p.destroy() });
+        }
+    }
+
+    function endGame(scene, message) {
+        isGameOver = true;
+        scene.physics.pause();
+        const overlay = scene.add.rectangle(195, 422, 390, 844, 0x000000, 0.8);
+        scene.add.text(195, 422, message, {
+            fontSize: '28px', fill: '#ffffff', align: 'center', fontStyle: 'bold'
+        }).setOrigin(0.5);
+        
+        const retry = scene.add.text(195, 600, 'もう一度腹を括る', { fontSize: '20px', fill: '#00ffff' }).setOrigin(0.5).setInteractive();
+        retry.on('pointerdown', () => location.reload());
+    }
+
+    function update() {
+        // 脆弱性テキストの追従
+        this.children.list.forEach(child => {
+            if (child.textChild) {
+                child.textChild.y = child.y;
+                if (child.y > 844) {
+                    child.textChild.destroy();
+                    child.destroy();
+                    stressLevel += 10; // 見逃すと部長が激怒
+                }
+            }
+        });
+    }
+    </script>
+</body>
+</html>

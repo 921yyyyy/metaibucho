@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>部長ギアソリッド：Tactical Espionage Action -仲間も自分も助けたい-</title>
+    <style>
+        body { margin: 0; background: #0a0a0a; color: #0f0; font-family: 'Courier New', Courier, monospace; overflow: hidden; touch-action: none; user-select: none; }
+        #game-ui { position: absolute; top: 10px; left: 10px; z-index: 10; pointer-events: none; text-shadow: 2px 2px #000; }
+        .stat { font-size: 14px; font-weight: bold; color: #fff; margin-bottom: 2px; }
+        #joystick { position: absolute; bottom: 30px; left: 30px; width: 90px; height: 90px; background: rgba(255,255,255,0.1); border-radius: 50%; border: 2px solid #0f0; }
+        #stick { position: absolute; top: 20px; left: 20px; width: 50px; height: 50px; background: #0f0; border-radius: 50%; opacity: 0.6; }
+        #action-btn { position: absolute; bottom: 35px; right: 30px; width: 85px; height: 85px; background: #f00; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; border: 4px solid #fff; box-shadow: 0 0 20px rgba(255,0,0,0.5); text-align: center; }
+        #msg { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; display: none; background: rgba(0,0,0,0.95); padding: 30px; border: 3px solid #0f0; z-index: 100; width: 85%; }
+        #rank-display { font-size: 48px; font-weight: bold; color: yellow; margin: 10px 0; }
+        button { background: #0f0; color: #000; border: none; padding: 12px 24px; font-size: 1.2em; font-weight: bold; margin-top: 15px; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+
+<div id="game-ui">
+    <div class="stat">SCORE: <span id="score-val">0</span> / BEST: <span id="best-val">0</span></div>
+    <div class="stat">累積証拠: <span id="evidence-val">0</span>% / 100%</div>
+    <div class="stat">未報告: <span id="pending-val">0</span>%</div>
+    <div class="stat" id="timer-ui" style="color: #ff0;">残り時間: <span id="time-val">30</span>s</div>
+</div>
+
+<div id="msg">
+    <h2 id="msg-title">RESULT</h2>
+    <div id="rank-display">-</div>
+    <p id="msg-text"></p>
+    <button onclick="location.reload()">再挑戦</button>
+</div>
+
+<div id="joystick"><div id="stick"></div></div>
+<div id="action-btn">証拠<br>撮影</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const evUI = document.getElementById('evidence-val');
+const scUI = document.getElementById('score-val');
+const penUI = document.getElementById('pending-val');
+const tmUI = document.getElementById('time-val');
+const bestUI = document.getElementById('best-val');
+const msgBox = document.getElementById('msg');
+const actionBtn = document.getElementById('action-btn');
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+// --- 初期設定 ---
+let score = 0;
+let bestScore = localStorage.getItem('boss_best_score') || 0;
+bestUI.innerText = bestScore;
+
+let startTime = Date.now();
+const TIME_LIMIT = 30; // 30秒
+
+let player = { x: 60, y: canvas.height - 80, r: 15, speed: 4.5, evidence: 0, pending: 0 };
+let boss = { x: canvas.width / 2, y: 180, r: 22, angle: 0, rotateSpeed: 0.05, visionDist: 230, vx: 2.5, vy: 1.5, isReverse: false };
+let desk = { x: 60, y: canvas.height - 80, w: 75, h: 55 };
+let colleagues = [];
+let gameOver = false;
+
+const painPhrases = [
+    "胃が痛い…", "また詰められてる…", "もう限界…", "帰りてぇ…", "理不尽だ…", 
+    "どういう意味？…", "（白目）", "パワハラだ…", "明日休みます…", "意識が遠のく…"
+];
+const quitPhrases = [
+    "お先に失礼します（退職）", "もう無理です（転職）", "探さないでください", "有給消化入ります", "田舎に帰ります",
+    "心が折れました", "労働基準監督署へ…", "あの高校生のせいだ…", "創業します‥", "無言の退職"
+];
+
+for(let i=0; i<5; i++) {
+    colleagues.push({
+        x: 80 + Math.random() * (canvas.width - 160),
+        y: 100 + Math.random() * (canvas.height * 0.5),
+        hp: 100, isFollowing: false, alive: true, currentSaying: "", sayTimer: 0, opacity: 1.0
+    });
+}
+
+// --- 操作系 ---
+let touchStart = null; let moveDir = { x: 0, y: 0 };
+window.addEventListener('touchstart', e => { if (e.touches[0].clientX < 200) touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY }; });
+window.addEventListener('touchmove', e => {
+    if (!touchStart) return;
+    const dx = e.touches[0].clientX - touchStart.x;
+    const dy = e.touches[0].clientY - touchStart.y;
+    const dist = Math.sqrt(dx*dx + dy*dy) || 1;
+    moveDir = { x: dx/dist * Math.min(dist, 40)/40, y: dy/dist * Math.min(dist, 40)/40 };
+    document.getElementById('stick').style.transform = `translate(${moveDir.x*40}px, ${moveDir.y*40}px)`;
+});
+window.addEventListener('touchend', () => { touchStart = null; moveDir = { x: 0, y: 0 }; document.getElementById('stick').style.transform = `translate(0,0)`; });
+
+let isTakingPhoto = false;
+actionBtn.addEventListener('touchstart', (e) => { e.preventDefault(); isTakingPhoto = true; });
+actionBtn.addEventListener('touchend', () => { isTakingPhoto = false; });
+
+function update() {
+    if (gameOver) return;
+
+    // タイムリミット判定
+    let elapsed = (Date.now() - startTime) / 1000;
+    let timeLeft = Math.max(0, TIME_LIMIT - elapsed);
+    tmUI.innerText = timeLeft.toFixed(1);
+    if (timeLeft <= 0) {
+        endGame("！ 時間切れ ！", calculateRank(score), "部長「やりたくないこともあると思うけど」<br>あなたは事業間交流させられた");
+        return;
+    }
+
+    player.x += moveDir.x * player.speed;
+    player.y += moveDir.y * player.speed;
+
+    boss.x += boss.vx; boss.y += boss.vy;
+    if (boss.x < 50 || boss.x > canvas.width - 50) boss.vx *= -1;
+    if (boss.y < 50 || boss.y > canvas.height * 0.45) boss.vy *= -1;
+    if (Math.random() < 0.02) boss.isReverse = !boss.isReverse;
+    boss.angle += boss.isReverse ? -boss.rotateSpeed * 1.8 : boss.rotateSpeed;
+
+    let followingCount = 0;
+    colleagues.forEach(c => {
+        if (!c.alive && c.opacity <= 0) return;
+        const distToBoss = Math.hypot(c.x - boss.x, c.y - boss.y);
+        const angleToC = Math.atan2(c.y - boss.y, c.x - boss.x);
+        let diff = angleToC - boss.angle;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+
+        if (c.alive && distToBoss < boss.visionDist && Math.abs(diff) < 0.6) {
+            c.hp -= 1.0; 
+            if (c.sayTimer <= 0) { c.currentSaying = painPhrases[Math.floor(Math.random()*painPhrases.length)]; c.sayTimer = 40; }
+            if (c.hp <= 0) { c.hp = 0; c.alive = false; c.currentSaying = quitPhrases[Math.floor(Math.random()*quitPhrases.length)]; }
+        }
+        if (c.sayTimer > 0) c.sayTimer--;
+        if (!c.alive) c.opacity -= 0.01;
+
+        if (c.alive && !c.isFollowing && Math.hypot(player.x - c.x, player.y - c.y) < 35) { c.isFollowing = true; c.currentSaying = "助けて！"; c.sayTimer = 50; }
+        if (c.isFollowing && c.alive) {
+            followingCount++;
+            c.x += (player.x - c.x) * 0.12; c.y += (player.y - c.y) * 0.12;
+            if (Math.hypot(c.x - desk.x, c.y - desk.y) < 45) {
+                c.alive = false; c.isFollowing = false;
+                score += 3000; // 仲間救出スコア
+                scUI.innerText = score;
+                c.currentSaying = "助かった！"; c.opacity = 1.0;
+            }
+        }
+    });
+
+    const pDistToBoss = Math.hypot(player.x - boss.x, player.y - boss.y);
+    const pAngle = Math.atan2(player.y - boss.y, player.x - boss.x);
+    let pDiff = pAngle - boss.angle;
+    while (pDiff < -Math.PI) pDiff += Math.PI * 2;
+    while (pDiff > Math.PI) pDiff -= Math.PI * 2;
+
+    if (pDistToBoss < boss.visionDist && Math.abs(pDiff) < 0.65) {
+        endGame("！ 発見 ！", calculateRank(score), "部長「腹括れよ！！！」<br>無理矢理左翼に転向させられた");
+    }
+
+    if (isTakingPhoto && pDistToBoss < 160) {
+        if (player.evidence < 100) {
+            player.pending += 0.7; 
+            if (player.evidence + player.pending > 100) player.pending = 100 - player.evidence;
+            penUI.innerText = Math.floor(player.pending);
+        }
+    }
+
+    if (player.pending > 0 && Math.hypot(player.x - desk.x, player.y - desk.y) < 45) {
+        score += Math.floor(player.pending * 40); // 報告スコア（100%で4000点）
+        player.evidence += player.pending;
+        player.pending = 0;
+        scUI.innerText = score;
+        evUI.innerText = Math.floor(player.evidence);
+        penUI.innerText = "0";
+
+        if (player.evidence >= 100) {
+            score += 3000; // 100%ボーナス
+            endGame("MISSION COMPLETE", calculateRank(score), "証拠が100%に達した！<br>ありがとう！コンプライアンスヘルプライン！");
+        }
+    }
+}
+
+function calculateRank(s) {
+    if (s >= 22000) return "S";
+    if (s >= 15000) return "A";
+    if (s >= 10000) return "B";
+    if (s >= 5000) return "C";
+    return "D";
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#222"; ctx.fillRect(desk.x - 35, desk.y - 25, 70, 50);
+    ctx.strokeStyle = "#0f0"; ctx.strokeRect(desk.x - 35, desk.y - 25, 70, 50);
+    ctx.fillStyle = "#fff"; ctx.font = "bold 10px Arial"; ctx.fillText("通報窓口", desk.x - 25, desk.y + 5);
+
+    colleagues.forEach(c => {
+        if (!c.alive && c.opacity <= 0) return;
+        ctx.globalAlpha = c.opacity;
+        ctx.fillStyle = c.isFollowing ? "#0ff" : (c.alive ? "#fff" : "#555");
+        ctx.beginPath(); ctx.arc(c.x, c.y, 12, 0, Math.PI*2); ctx.fill();
+        if (c.alive) {
+            ctx.fillStyle = "rgba(255,0,0,0.5)"; ctx.fillRect(c.x - 15, c.y - 25, 30, 4);
+            ctx.fillStyle = "#0f0"; ctx.fillRect(c.x - 15, c.y - 25, 30 * (c.hp/100), 4);
+        }
+        if (c.currentSaying && (c.sayTimer > 0 || !c.alive)) {
+            ctx.fillStyle = "#fff"; ctx.font = "11px sans-serif"; ctx.textAlign = "center";
+            ctx.fillText(c.currentSaying, c.x, c.y - 35);
+        }
+        ctx.globalAlpha = 1.0;
+    });
+
+    ctx.beginPath(); ctx.moveTo(boss.x, boss.y);
+    ctx.arc(boss.x, boss.y, boss.visionDist, boss.angle - 0.6, boss.angle + 0.6);
+    ctx.fillStyle = "rgba(255, 0, 0, 0.25)"; ctx.fill();
+
+    ctx.fillStyle = "red"; ctx.beginPath(); ctx.arc(boss.x, boss.y, 22, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(boss.x, boss.y);
+    ctx.lineTo(boss.x + Math.cos(boss.angle)*35, boss.y + Math.sin(boss.angle)*35); ctx.stroke();
+
+    ctx.fillStyle = "#0f0"; ctx.beginPath(); ctx.arc(player.x, player.y, 15, 0, Math.PI*2); ctx.fill();
+    if (isTakingPhoto) {
+        ctx.strokeStyle = "yellow"; ctx.lineWidth = 2;
+        ctx.strokeRect(player.x-22, player.y-22, 44, 44);
+    }
+}
+
+function endGame(title, rank, text) {
+    gameOver = true;
+    if (score > bestScore) {
+        bestScore = score;
+        localStorage.setItem('boss_best_score', score);
+    }
+    msgBox.style.display = "block";
+    document.getElementById('msg-title').innerText = title;
+    document.getElementById('rank-display').innerText = "RANK: " + rank;
+    document.getElementById('msg-text').innerHTML = text + `<br>今回のスコア: ${score}`;
+}
+
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+loop();
+</script>
+</body>
+</html>

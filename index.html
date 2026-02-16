@@ -170,7 +170,7 @@ function update() {
     }
 
     if (player.pending > 0 && Math.hypot(player.x - desk.x, player.y - desk.y) < 45) {
-        score += Math.floor(player.pending * 40); // 報告スコア（100%で4000点）
+        score += Math.round(player.pending * 40); // 四捨五入にする
         player.evidence += player.pending;
         player.pending = 0;
         scUI.innerText = score;
